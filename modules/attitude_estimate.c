@@ -11,6 +11,8 @@
  #include <stm32f10x.h>
  #include <math.h>
  #include <stdio.h>
+ #include "ucos_ii.h"
+ #include "sensors.h"
  
  
  
@@ -25,6 +27,74 @@
  static float atan2_numerical(float y, float x);
  static float abs_c_float_version(float);
 
+ 
+ OS_EVENT	*mbox_sensors;
+ OS_EVENT* mbox_att_est;  //消息邮箱句柄
+
+ 
+ 
+ 
+ /**
+ *
+ * 名称：TaskAttEst
+ *
+ * 描述：姿态解算任务
+ *
+ */
+void TaskAttEst(void* pdata)
+{
+	
+	float euler_delta[3];						  								// 三轴分别：roll pitch yaw
+	float rot_matrix[3][3];						  						  // 旋转矩阵2维数组
+	static float att_est[3] = {0,0,1};	  	          // 只初始化1次
+	float att_gyro[3];
+	float w_gyro2acc = 0.2;                 					// 陀螺仪相对加计比值
+	u8 i = 0;
+	float deltaT = 0.32;								  					  // 这个如果能通过计算运行循环时间解算就比较好了
+  ad* attitude_data;
+	
+	INT8U* err;
+	sd* sensors_data;
+	mbox_sensors = OSMboxCreate(NULL);								// 创建传感器数据邮箱并初始化为空
+	
+	pdata = pdata;																		// 防止警告
+	//任务大循环
+	while(1)
+	{
+		/* 1 20ms周期等待传感器消息
+		 * 2 处理
+		 * 3 发布姿态消息
+		 */
+		sensors_data = OSMboxPend(mbox_sensors, OS_TICKS_PER_SEC/50uL, err);
+		//TODO:处理超时或出错的情况
+		sensors_data_direction_correct(sensors_data);        //传感器方向对正
+    //printf_sensors_data_estimate(*sensors_data);       //读出正确取向传感器数据分析
+	  for(; i < 3; i++)
+	  {
+	    euler_delta[i] = sensors_data->gyro[i]*deltaT;     //计算相比较上次解算的旋转欧拉角
+	    attitude_data->angle_rate[i] = sensors_data->gyro[i]; 
+	  }
+	  euler_to_rotmatrix(euler_delta, rot_matrix);   		   //欧拉角计算旋转矩阵
+	  matrix_multiply(rot_matrix, att_est, att_gyro);		   //由前一次估计结果迭代得到当前姿态矢量
+	  normalize(sensors_data->acc);				           		   //加计矢量正交化
+	 
+	  for (i = 0; i<3; i++)
+	  {
+	    att_est[i] = (w_gyro2acc*att_gyro[i]+sensors_data->acc[i])/(1+w_gyro2acc);
+	  }
+	  attitude_data->euler_angle[0] = atan2_numerical(att_est[1],sqrt(att_est[0]*att_est[0]+att_est[2]*att_est[2]));
+	  attitude_data->euler_angle[1] = atan2_numerical(att_est[0], att_est[2]);
+		
+		for (i = 0; i<4; i++)
+	  {
+	    attitude_data->rc_command[i] = sensors_data->rc_command[i];//用于控制任务
+	  }
+		
+		OSMboxPost(mbox_att_est, attitude_data);
+	}
+}
+ 
+ 
  
  
  
@@ -51,50 +121,6 @@
 	 return ;
  }
  
- 
- 
- 
- 
-/**
- *
- * 名称：attitude_estimate
- *
- * 描述：姿态解算
- *
- */
- void attitude_estimate(ad* attitude_data, sd* sensors_data)
- {
-	 float euler_delta[3];						  								//三轴分别：roll pitch yaw
-	 float rot_matrix[3][3];						  						  //旋转矩阵2维数组
-	 static float att_est[3] = {0,0,1};	  	            //只初始化1次
-	 float att_gyro[3];
-	 float w_gyro2acc = 0.2;                 							  //陀螺仪相对加计比值
-	 u8 i = 0;
-	 float deltaT = 0.32;								  							//这个如果能通过计算运行循环时间解算就比较好了
-	 
-	 sensors_data_direction_correct(sensors_data);      //传感器方向对正
-     printf_sensors_data_estimate(*sensors_data);       //读出正确取向传感器数据分析
-	 for(; i < 3; i++)
-	 {
-	   euler_delta[i] = sensors_data->gyro[i]*deltaT;   //计算相比较上次解算的旋转欧拉角
-	   attitude_data->angle_rate[i] = sensors_data->gyro[i]; 
-	 }
-	 euler_to_rotmatrix(euler_delta, rot_matrix);   		//欧拉角计算旋转矩阵
-	 matrix_multiply(rot_matrix, att_est, att_gyro);		//由前一次估计结果迭代得到当前姿态矢量
-	 normalize(sensors_data->acc);				           		//加计矢量正交化
-	 
-
-	 for (i = 0; i<3; i++)
-	 {
-	   att_est[i] = (w_gyro2acc*att_gyro[i]+sensors_data->acc[i])/(1+w_gyro2acc);
-	 }
-	 attitude_data->euler_angle[0] = atan2_numerical(att_est[1],sqrt(att_est[0]*att_est[0]+att_est[2]*att_est[2]));
-	 attitude_data->euler_angle[1] = atan2_numerical(att_est[0], att_est[2]);	 
-	 printf("Euler   Angle (deg ): %.2f%s%.2f%s%.2f%s",attitude_data->euler_angle[0], "         ",attitude_data->euler_angle[1], "      ",attitude_data->euler_angle[2], "         \n");
-	 printf("Angle   Rate  (dps ): %.2f%s%.2f%s%.2f%s",attitude_data->angle_rate[0], "         ",attitude_data->angle_rate[1], "      ",attitude_data->angle_rate[2], "         \n");
-
-	 return ;
- }
  
  
 

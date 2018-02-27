@@ -506,11 +506,6 @@
               <FilePath>..\Drivers\boards\sanity-v1708\board_config.c</FilePath>
             </File>
             <File>
-              <FileName>api_usart.c</FileName>
-              <FileType>1</FileType>
-              <FilePath>..\Drivers\boards\api\api_usart.c</FilePath>
-            </File>
-            <File>
               <FileName>debug.c</FileName>
               <FileType>1</FileType>
               <FilePath>..\Drivers\Debug\debug.c</FilePath>
@@ -631,14 +626,14 @@
           <GroupName>modules</GroupName>
           <Files>
             <File>
-              <FileName>attitude_estimate.c</FileName>
-              <FileType>1</FileType>
-              <FilePath>..\modules\estimate_control\attitude_estimate.c</FilePath>
-            </File>
-            <File>
               <FileName>attitude_control.c</FileName>
               <FileType>1</FileType>
-              <FilePath>..\modules\estimate_control\attitude_control.c</FilePath>
+              <FilePath>..\modules\attitude_control.c</FilePath>
+            </File>
+            <File>
+              <FileName>attitude_estimate.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\modules\attitude_estimate.c</FilePath>
             </File>
           </Files>
         </Group>

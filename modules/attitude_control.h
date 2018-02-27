@@ -8,14 +8,13 @@
 
 
 
+void TaskAttCtrl(void* pdata);
 
-
-
-
-
-void set_reference(const u16* rc_commands, float* reference);
-void attitude_control(ad attitude_data, const float* reference, int16_t* output);
-
+typedef struct
+{
+	float output[4];
+	u16 motors[4];
+}od;
 
 
 #endif

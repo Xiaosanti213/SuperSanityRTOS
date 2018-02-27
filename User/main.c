@@ -7,6 +7,8 @@
  **/
  
  
+ 
+ 
 #include <stm32f10x.h>
 #include "motor.h"
 #include "sensors.h"
@@ -21,7 +23,39 @@
 
 
 
-/*
+
+
+
+/**
+ *
+ * 任务：
+ * 1 传感器数据校准，读取
+ * 2 姿态解算
+ * 3 姿态控制
+ * 4 舵量输出
+ * 任务ID 优先级 栈空间大小
+ * 分配栈空间
+ *
+ **/
+#define TASK_SENSORS_PRIO 7
+#define TASK_SENSORS_STACK_SIZE 128
+
+#define TASK_ATT_EST_PRIO 6
+#define TASK_ATT_EST_STACK_SIZE 128
+
+#define TASK_ATT_CTRL_PRIO 5
+#define TASK_ATT_CTRL_STACK_SIZE 128
+
+#define TASK_MOTORS_PRIO 4
+#define TASK_MOTORS_STACK_SIZE 128
+
+OS_STK TaskSensorsStk[TASK_SENSORS_STACK_SIZE];
+OS_STK TaskAttEstStk[TASK_ATT_EST_STACK_SIZE];
+OS_STK TaskAttCtrlStk[TASK_ATT_CTRL_STACK_SIZE];
+OS_STK TaskMotorsStk[TASK_MOTORS_STACK_SIZE];
+
+
+
 #define TaskStkLength 64
 void Task0(void* pdata)
 {
@@ -56,10 +90,6 @@ void Task1(void* pdata)
 
 
 
-*/
-
-
-
 
 
 int main()
@@ -74,28 +104,14 @@ int main()
 	*/
 	
 	
+  OSInit();
+	OSTaskCreate(TaskSensors, (void*)0, &TaskSensorsStk[TASK_SENSORS_STACK_SIZE-1],TASK_SENSORS_PRIO);
+	OSTaskCreate(TaskAttEst, (void*)0, &TaskAttEstStk[TASK_ATT_EST_STACK_SIZE-1],TASK_ATT_EST_PRIO);
+	OSTaskCreate(TaskAttCtrl, (void*)0, &TaskAttCtrlStk[TASK_ATT_CTRL_STACK_SIZE-1],TASK_ATT_CTRL_PRIO);
+  OSTaskCreate(TaskMotors, (void*)0, &TaskMotorsStk[TASK_MOTORS_STACK_SIZE-1],TASK_MOTORS_PRIO); 	
+  OSStart(); 
+  
 	
-	//上电之后请保证各个舵程中立
-	sd sensors_data;
-	sc calib_data;
-	int16_t output[4] = {0,0,0,0}; 
-	ad attitude_data;
-	float reference[4];
-	sensors_init();
-  sensors_calibration(&calib_data, &sensors_data);//一定要静止水平放置四轴，摇杆中立再上电
-	while(1)
-	{
-		get_sensors_data(&sensors_data, &calib_data);
-		attitude_estimate(&attitude_data, &sensors_data);
-		set_reference(sensors_data.rc_command, reference); //摇杆舵量数据转化为控制参考
-		attitude_control(attitude_data, reference, output);
-		
-		mix_table(output, &sensors_data); 
-		go_arm_check(sensors_data.rc_command);//解锁之前不应有输出，亦不应有舵量
-		write_mini_motors(sensors_data.motor);
-	}
-
-
 
 	return 0;
 }

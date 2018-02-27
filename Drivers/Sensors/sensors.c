@@ -19,6 +19,76 @@
 #include "attitude_estimate.h"
 #include <stdio.h>
 		
+extern OS_EVENT	*mbox_sensors;														/* 定义传感器消息邮箱的指针，类似句柄	*/
+
+static void nrf_read_to_motors(u16* rc_command);
+static void sensors_calibration(sc* s_calib, sd* s_data);
+
+/**
+ *
+ * 名称：TaskSensors
+ *
+ * 描述：传感器数据读取，校准任务
+ *
+ */
+void TaskSensors(void* pdata)
+{
+	u8 axis = 0;
+	float smooth_factor = 1.5;
+	static float acc_filtered[3] = {0,0,1};
+	//上电之后请保证各个舵程中立
+	sd sensors_data;
+	sc calib_data;
+	
+	sensors_calibration(&calib_data, &sensors_data);  // 一定要静止水平放置四轴，摇杆中立再上电，获取校准参数
+
+	pdata = pdata;																		// 防止编译器告警
+
+	//任务大循环
+	while(1)
+	{
+		/* 1 读取并校准传感器数据
+		 * 2 发布处理后的传感器消息
+		 */
+		//1 读取数据，仍然使用sensors_data变量
+	  i2c_mpu6050_read_acc_s(sensors_data.acc);
+	  i2c_mpu6050_read_gyro_s(sensors_data.gyro);
+	  i2c_mpu6050_read_mag_s(sensors_data.mag); 
+	  sensors_data.press = i2c_ms5611_calculate_s();
+	  nrf_read_to_motors(sensors_data.rc_command);
+	
+	  //2 加计陀螺仪校准修正
+	  for(axis=0; axis<3; axis++)
+    {
+		  sensors_data.acc[axis] -= calib_data.acc_calib[axis];
+		  sensors_data.gyro[axis] -= calib_data.gyro_calib[axis];
+			
+		//3 迭代加计平滑滤波修正	
+			acc_filtered[axis] -= acc_filtered[axis]/smooth_factor;
+		  acc_filtered[axis] += sensors_data.acc[axis]/smooth_factor;
+		  sensors_data.acc[axis] = acc_filtered[axis];
+	  }
+	  
+	  //4 遥控器舵量修正
+	  for(axis=0; axis<4; axis++)
+	  {
+		  if((calib_data.rc_calib[axis]>50 || calib_data.rc_calib[axis]<-50) && axis!=2)
+			  sensors_data.rc_command[axis] = 1000;		// 校准数据出错，三轴舵量全部归中
+	    else if((calib_data.rc_calib[axis]>50 || calib_data.rc_calib[axis]<-50) && axis==2)
+			  sensors_data.rc_command[axis] = 0;			// 校准数据出错，油门位置最低
+		  else																			
+		    sensors_data.rc_command[axis] -= calib_data.rc_calib[axis];
+	  }
+		
+		//5 填充并发布消息邮箱
+		OSMboxPost(mbox_sensors, &sensors_data);
+	  return;
+	}
+}
+
+
+
+
 
 	
 
@@ -44,55 +114,6 @@ void sensors_init(void)
 	tim_config(); 
 	
 }
-
-
-
-
-/**
- *
- * 名称：get_sensors_data
- *
- * 描述：读取传感器数据
- *
- */ 
-void get_sensors_data(sd* sdata, sc* calib_data)
-{
-	u8 axis = 0;
-	float smooth_factor = 1.5;
-	static float acc_filtered[3] = {0,0,1};
-	//1 读取数据
-	i2c_mpu6050_read_acc_s(sdata->acc);
-	i2c_mpu6050_read_gyro_s(sdata->gyro);
-	i2c_mpu6050_read_mag_s(sdata->mag); 
-	sdata->press = i2c_ms5611_calculate_s();
-	nrf_read_to_motors(sdata->rc_command);
-	
-	//2 加计陀螺仪校准修正
-	for(axis=0; axis<3; axis++)
-  {
-		sdata->acc[axis] -= calib_data->acc_calib[axis];
-		sdata->gyro[axis] -= calib_data->gyro_calib[axis];
-	}
-	//3 迭代加计平滑滤波修正
-	for(axis=0; axis<3; axis++)
-	{
-		acc_filtered[axis] -= acc_filtered[axis]/smooth_factor;
-		acc_filtered[axis] += sdata->acc[axis]/smooth_factor;
-		sdata->acc[axis] = acc_filtered[axis];
-	}
-	//4 遥控器舵量修正
-	for(axis=0; axis<4; axis++)
-	{
-		if((calib_data->rc_calib[axis]>50 || calib_data->rc_calib[axis]<-50) && axis!=2)
-			sdata->rc_command[axis] = 1000;//校准数据出错，三轴舵量全部归中
-	  else if((calib_data->rc_calib[axis]>50 || calib_data->rc_calib[axis]<-50) && axis==2)
-			sdata->rc_command[axis] = 0;//校准数据出错，油门位置最低
-		else
-		  sdata->rc_command[axis] -= calib_data->rc_calib[axis];
-	}
-	return;
-}
-
 
 
 
@@ -141,10 +162,10 @@ void sensors_calibration(sc* s_calib, sd* s_data)
 		//10次遥控器数据取平均值作为偏移量
 		for(;calib_flag<50;)
 		{
-			nrf_read_to_motors(s_data->motor);
-			if(s_data->motor[axis]<1100 && s_data->motor[axis]>900)//遥控数据正常
+			nrf_read_to_motors(s_data->rc_command);
+			if(s_data->rc_command[axis]<1100 && s_data->rc_command[axis]>900)//遥控数据正常
 			{
-				rc_sum[axis] += s_data->motor[axis]-1000;
+				rc_sum[axis] += s_data->rc_command[axis]-1000;
 			  calib_flag++;
 			}
 			else 
@@ -157,7 +178,7 @@ void sensors_calibration(sc* s_calib, sd* s_data)
 			}
 		}
 		s_calib->rc_calib[axis] = rc_sum[axis]/(calib_flag);
-		//后续添加：如果少于一定次数，校准失败
+		//TODO：如果少于一定次数，校准失败
 	}
 	
 }
@@ -186,22 +207,10 @@ void nrf_read_to_motors(u16* rc_command)
 	/*while(!spi_nrf_rx_packet(rxbuf))
 	{printf("No RC Data%d\n",spi_nrf_rx_packet(rxbuf));}//拿不到则不进行下一步
 		*///下面这个步骤已经将motor值映射到了1000~2000上
-		rc_command[0] = (float)(rxbuf[1]<<8 | rxbuf[0])/4096*1000 + 1000;
-		rc_command[1] = (float)(rxbuf[3]<<8 | rxbuf[2])/4096*1000 + 1000;
-		rc_command[2] = (float)(rxbuf[5]<<8 | rxbuf[4])/4096*1000 + 1000;
-		rc_command[3] = (float)(rxbuf[7]<<8 | rxbuf[6])/4096*1000 + 1000;
-		
-	 	//printf("\r\n 从机端接收到遥控器杆量数据：\n");
-	  //printf("RA右手副翼：%d%s", rc_command[0], "\n");
-	  //printf("LE左手升降：%d%s", rc_command[1], "\n");
-	  //printf("RT右手油门：%d%s", rc_command[2], "\n");
-	  //printf("LR左手方向：%d%s", rc_command[3], "\n");
-		
-	 // 对于空心杯电机来说：总占空比频率改变5Hz(2000)则需将值映射到0~2000上
-	 	rc_command[0] = (rc_command[0] - 1000)*2;
-	  rc_command[1] = (rc_command[1] - 1000)*2;
-    rc_command[2] = (rc_command[2] - 1000)*2;
-	 	rc_command[3] = (rc_command[3] - 1000)*2;	
+		rc_command[0] = (float)(rxbuf[1]<<8 | rxbuf[0])/2048*1000;
+		rc_command[1] = (float)(rxbuf[3]<<8 | rxbuf[2])/2048*1000;
+		rc_command[2] = (float)(rxbuf[5]<<8 | rxbuf[4])/2048*1000;
+		rc_command[3] = (float)(rxbuf[7]<<8 | rxbuf[6])/2048*1000;
 
 
     //printf("\r\n 从机端接收到遥控器杆量数据：\n");

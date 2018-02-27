@@ -17,16 +17,16 @@
  typedef struct attitude_data
  {
 	 float euler_angle[3];	//用来存储roll pitch yaw三轴姿态角
-	 float angle_rate[3];   //存储角速率 
+	 float angle_rate[3];   //存储角速率
+   
+   u16 rc_command[4]; //用于计算控制参考	 
  }ad;
  
  
  
  
- 
  void printf_sensors_data_estimate(sd sdata);
- void attitude_estimate(ad* attitude_data, sd* sensors_data);
- 
+ void TaskAttEst(void* pdata);
  
 #endif
  
